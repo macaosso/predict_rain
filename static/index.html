@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HKO Gridded Rainfall Nowcast Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background-color: #0f1118; color: #e4e7ed; }
+        .card-bg { background: #181b26; border: 1px solid #2c313f; }
+        .btn-primary { background-color: #2563eb; }
+        .btn-primary:hover { background-color: #1d4ed8; }
+        .btn-refresh { background-color: #059669; }
+        .btn-refresh:hover { background-color: #047857; }
+        select { background-color: #232733; color: white; border: 1px solid #373c4a; }
+        .spinner {
+            border: 4px solid rgba(255,255,255,0.1);
+            border-left-color: #3b82f6;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body class="p-4 md:p-6 min-h-screen">
+    <div class="max-w-7xl mx-auto">
+        <!-- Header Title -->
+        <header class="mb-6">
+            <h1 class="text-2xl md:text-3xl font-bold text-blue-300">HKO 格点雨量临近预报仪表板</h1>
+            <p class="text-gray-400 mt-1">Macau Radar Range / Rain Peak Detection Dark Dashboard</p>
+        </header>
+
+        <!-- Control Bar -->
+        <div class="card-bg rounded-lg p-4 mb-6 flex flex-wrap gap-4 items-center">
+            <!-- Refresh Button -->
+            <button id="refreshBtn" class="btn-refresh px-5 py-2 rounded font-medium text-white flex items-center gap-2">
+                <span>🔄</span> Refresh Data
+            </button>
+
+            <!-- Time Select Dropdown -->
+            <div class="flex items-center gap-3">
+                <label class="font-medium">Forecast Time:</label>
+                <select id="timeSelect" class="px-3 py-2 rounded min-w-[260px]">
+                    <option value="">Loading timestamps...</option>
+                </select>
+            </div>
+
+            <!-- Current Status Text -->
+            <div id="statusText" class="ml-auto text-gray-300"></div>
+        </div>
+
+        <!-- Map Display Card -->
+        <div class="card-bg rounded-lg p-4">
+            <div id="loadingBox" class="flex justify-center items-center py-24 hidden">
+                <div class="spinner"></div>
+                <span class="ml-3 text-gray-300">Rendering rainfall map, please wait...</span>
+            </div>
+            <img id="rainMapImg" class="w-full rounded hidden" alt="Rainfall Contour Map">
+        </div>
+    </div>
+
+    <script>
+        const timeSelect = document.getElementById("timeSelect");
+        const rainMapImg = document.getElementById("rainMapImg");
+        const refreshBtn = document.getElementById("refreshBtn");
+        const loadingBox = document.getElementById("loadingBox");
+        const statusText = document.getElementById("statusText");
+
+        // Show / Hide loading
+        function setLoading(state) {
+            if(state) {
+                loadingBox.classList.remove("hidden");
+                rainMapImg.classList.add("hidden");
+            } else {
+                loadingBox.classList.add("hidden");
+                rainMapImg.classList.remove("hidden");
+            }
+        }
+
+        // Fetch all available timestamps and fill dropdown
+        async function loadTimestamps() {
+            try {
+                const res = await fetch("/api/timestamps");
+                const data = await res.json();
+                timeSelect.innerHTML = "";
+                data.timestamps.forEach(item => {
+                    const opt = document.createElement("option");
+                    opt.value = item.raw;
+                    opt.textContent = item.display;
+                    timeSelect.appendChild(opt);
+                });
+                // Auto load first time frame
+                if(data.timestamps.length > 0) {
+                    renderMap(data.timestamps[0].raw, data.timestamps[0].display);
+                }
+            } catch(err) {
+                statusText.textContent = "Error loading timestamps";
+                console.error(err);
+            }
+        }
+
+        // Render map image for selected time
+        function renderMap(rawTs, displayTs) {
+            setLoading(true);
+            statusText.textContent = `Current View: ${displayTs}`;
+            rainMapImg.src = `/api/render?time=${rawTs}&t=${Date.now()}`;
+            rainMapImg.onload = () => setLoading(false);
+            rainMapImg.onerror = () => {
+                setLoading(false);
+                statusText.textContent = "Map render failed";
+            }
+        }
+
+        // Refresh full data source
+        async function refreshAllData() {
+            statusText.textContent = "Refreshing HKO rainfall dataset...";
+            try {
+                await fetch("/api/refresh");
+                await loadTimestamps();
+                statusText.textContent = "Data refreshed successfully";
+            } catch(err) {
+                statusText.textContent = "Refresh failed";
+                console.error(err);
+            }
+        }
+
+        // Event Listeners
+        timeSelect.addEventListener("change", (e) => {
+            const raw = e.target.value;
+            const display = e.target.options[e.target.selectedIndex].text;
+            renderMap(raw, display);
+        });
+
+        refreshBtn.addEventListener("click", refreshAllData);
+
+        // Initial page load
+        window.addEventListener("DOMContentLoaded", loadTimestamps);
+    </script>
+</body>
+</html>
