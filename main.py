@@ -1,5 +1,6 @@
 import os
 import io
+import json
 import numpy as np
 import pandas as pd
 import requests
@@ -9,14 +10,36 @@ from scipy.ndimage import maximum_filter
 from fastapi import FastAPI, Query
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+# Import CORS middleware
+from fastapi.middleware.cors import CORSMiddleware
 
-app = FastAPI()
+# Initialize App
+app = FastAPI(title="HKO Rainfall API Backend")
 
-# Mount static files correctly
+# ===================== CORS CONFIG =====================
+# Update this list with your GitHub Pages domain + local dev address
+ALLOWED_ORIGINS = [
+    "http://127.0.0.1:8000",
+    "http://localhost:8000",
+    "https://YOUR_GITHUB_USERNAME.github.io"  # Replace with your actual GitHub Pages URL
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,       # Allow specified frontend domains
+    allow_credentials=True,
+    allow_methods=["*"],                 # Allow all HTTP methods (GET/POST etc)
+    allow_headers=["*"],                 # Allow all request headers
+)
+# ======================================================
+
+# Static file directory setup
 STATIC_DIR = os.path.join(os.getcwd(), "static")
+os.makedirs(STATIC_DIR, exist_ok=True)
+os.makedirs(os.path.join(STATIC_DIR, "data"), exist_ok=True)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-# Global cache
+# Global cache variables
 DF_RAW = None
 TIME_LIST = []
 CSV_URL = "https://data.weather.gov.hk/weatherAPI/hko_data/F3/Gridded_rainfall_nowcast_tc.csv"
@@ -115,17 +138,34 @@ def process_timeslice(target_time: str):
         "macau_center": [MACAU_LAT, MACAU_LON]
     }
 
-# Homepage route (only / returns html)
+# Export static JSON files for offline GitHub Pages use
+def export_all_static_json():
+    data_dir = os.path.join(STATIC_DIR, "data")
+    ts_list = []
+    for raw in TIME_LIST:
+        dt = datetime.strptime(raw, "%Y%m%d%H%M")
+        ts_list.append({"raw": raw, "display": dt.strftime("%Y-%m-%d %H:%M")})
+    with open(os.path.join(data_dir, "timestamps.json"), "w", encoding="utf-8") as f:
+        json.dump({"timestamps": ts_list}, f, ensure_ascii=False)
+    for ts in TIME_LIST:
+        map_data = process_timeslice(ts)
+        file_path = os.path.join(data_dir, f"map_{ts}.json")
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(map_data, f, ensure_ascii=False)
+    print(f"Static JSON saved to {data_dir}")
+
+# Homepage route
 @app.get("/")
 def root():
     html_path = os.path.join(STATIC_DIR, "index.html")
     return FileResponse(html_path)
 
-# All API routes return JSON only
+# API Endpoints
 @app.get("/api/refresh")
 def api_refresh():
     init_data()
-    return JSONResponse({"status": "ok", "count": len(TIME_LIST)})
+    export_all_static_json()
+    return JSONResponse({"status": "ok", "time_count": len(TIME_LIST)})
 
 @app.get("/api/timestamps")
 def api_ts():
@@ -140,10 +180,12 @@ def api_mapdata(time: str = Query(...)):
     data = process_timeslice(time)
     return JSONResponse(data)
 
+# Server startup
 @app.on_event("startup")
 def load_on_start():
     try:
         init_data()
-        print("Data loaded successfully")
+        export_all_static_json()
+        print("✅ Data loaded + static JSON exported successfully")
     except Exception as e:
-        print(f"Startup warning: {e}")
+        print(f"⚠️ Startup error: {str(e)}")
