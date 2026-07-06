@@ -9,10 +9,13 @@ from scipy.ndimage import maximum_filter
 from fastapi import FastAPI, Query
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+import os
 
-# Init app
+# Init app FIRST before mount static
 app = FastAPI(title="HKO Rainfall Web Map API")
-app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# Fix: Mount static AFTER app init, correct directory path
+app.mount("/static", StaticFiles(directory=os.path.join(os.getcwd(), "static")), name="static")
 
 # Global cache
 DF_RAW = None
@@ -25,7 +28,7 @@ KM_PER_DEG = 111.32
 # Load & parse raw CSV
 def init_data():
     global DF_RAW, TIME_LIST
-    resp = requests.get(CSV_URL)
+    resp = requests.get(CSV_URL, timeout=10)
     df = pd.read_csv(io.StringIO(resp.text), encoding='utf-8-sig')
     df.columns = [c.strip() for c in df.columns]
 
@@ -111,7 +114,7 @@ def process_timeslice(target_time: str):
     # 3. Sparse observation labels
     station_labels = sample_valid_points(df_frame, lon_col, lat_col)
 
-    # 4. Radar ring polygons (convert radius deg to lat/lon circle points)
+    # 4. Radar ring polygons
     radar_rings = []
     ring_km = [10,25,50,100]
     ring_labels = ["10 km","25 km","50 km","100 km"]
@@ -139,14 +142,11 @@ def process_timeslice(target_time: str):
         "macau_center": [MACAU_LAT, MACAU_LON]
     }
 
-# API Routes
-@app.on_event("startup")
-def startup():
-    init_data()
-
+# Fix Root Route: Directly serve static/index.html correctly
 @app.get("/")
-def home():
-    return FileResponse("static/index.html")
+def dashboard_root():
+    html_path = os.path.join(os.getcwd(), "static", "index.html")
+    return FileResponse(html_path)
 
 # Refresh raw dataset
 @app.get("/api/refresh")
@@ -168,3 +168,12 @@ def get_ts():
 def mapdata(time: str = Query(...)):
     data = process_timeslice(time)
     return JSONResponse(data)
+
+# Safe startup without blocking crash
+@app.on_event("startup")
+def startup_task():
+    try:
+        init_data()
+        print("Data loaded successfully on startup")
+    except Exception as e:
+        print(f"Startup data load warning: {str(e)}")
